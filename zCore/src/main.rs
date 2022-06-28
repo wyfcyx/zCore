@@ -67,6 +67,7 @@ fn secondary_main() -> ! {
     // not mapped to UART MMIO, which means we can't output
     // until secondary_init is complete.
     kernel_hal::secondary_init();
-    log::info!("hart{} inited", kernel_hal::cpu::cpu_id());
-    utils::wait_for_exit(None)
+    log::warn!("hart{} inited", kernel_hal::cpu::cpu_id());
+    linux_syscall::event_loop();
+    //utils::wait_for_exit(None)
 }

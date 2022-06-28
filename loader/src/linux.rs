@@ -168,6 +168,7 @@ async fn handle_user_trap(thread: &CurrentThread, mut ctx: Box<UserContext>) -> 
         let args = syscall_args(&ctx);
         ctx.advance_pc(reason);
         thread.put_context(ctx);
+        /*
         let mut syscall = linux_syscall::Syscall {
             thread,
             thread_fn,
@@ -177,6 +178,10 @@ async fn handle_user_trap(thread: &CurrentThread, mut ctx: Box<UserContext>) -> 
         run_with_irq_enable! {
             let ret = syscall.syscall(num as u32, args).await as usize
         }
+        */
+        
+        let ret = linux_syscall::remote_syscall(Arc::clone(&thread.0), thread_fn, num as u32, args).await as usize;
+
         thread.with_context(|ctx| ctx.set_field(UserContextField::ReturnValue, ret))?;
         return Ok(());
     }

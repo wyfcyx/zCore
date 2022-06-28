@@ -467,7 +467,7 @@ impl Task for Thread {
 ///
 /// [`Thread`]: crate::task::Thread
 /// [`Thread::start`]: crate::task::Thread::start
-pub struct CurrentThread(Arc<Thread>);
+pub struct CurrentThread(pub Arc<Thread>);
 
 impl CurrentThread {
     /// Returns the inner structure `Arc<Thread>`.

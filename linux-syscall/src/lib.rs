@@ -41,6 +41,8 @@ use zircon_object::{vm::VirtAddr, ZxError};
 
 use self::consts::SyscallType as Sys;
 
+pub use async_syscall::{event_loop, remote_syscall};
+
 mod consts {
     // generated from syscall.h.in
     include!(concat!(env!("OUT_DIR"), "/consts.rs"));
@@ -53,6 +55,7 @@ mod signal;
 mod task;
 mod time;
 mod vm;
+mod async_syscall;
 
 /// The struct of Syscall which stores the information about making a syscall
 pub struct Syscall<'a> {
