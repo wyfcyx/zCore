@@ -6,7 +6,7 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use super::Thread;
 use crate::{ThreadFn, CurrentThread, Syscall};
-use spin::Mutex;
+use lock::Mutex;
 use lazy_static::*;
 
 /// Polled by the application core, wrap the behavior of the async syscall.

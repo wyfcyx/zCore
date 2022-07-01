@@ -7,7 +7,7 @@ use linux_object::signal::{
 };
 
 use kernel_hal::context::{TrapReason, UserContext, UserContextField};
-use kernel_hal::interrupt::{intr_off, intr_on};
+//use kernel_hal::interrupt::{intr_off, intr_on};
 use linux_object::fs::{vfs::FileSystem, INodeExt};
 use linux_object::thread::{CurrentThreadExt, ThreadExt};
 use linux_object::{loader::LinuxElfLoader, process::ProcessExt};
@@ -149,6 +149,7 @@ pub fn push_stack<T>(stack_top: usize, val: T) -> usize {
     }
 }
 
+/*
 macro_rules! run_with_irq_enable {
     ($($statements:stmt)*) => {
         intr_on();
@@ -156,6 +157,8 @@ macro_rules! run_with_irq_enable {
         intr_off();
     };
 }
+*/
+
 
 async fn handle_user_trap(thread: &CurrentThread, mut ctx: Box<UserContext>) -> ZxResult {
     let reason = ctx.trap_reason();
@@ -171,9 +174,10 @@ async fn handle_user_trap(thread: &CurrentThread, mut ctx: Box<UserContext>) -> 
             syscall_entry: kernel_hal::context::syscall_entry as usize,
         };
         trace!("Syscall : {} {:x?}", num as u32, args);
-        run_with_irq_enable! {
-            let ret = syscall.syscall(num as u32, args).await as usize
-        }
+        use kernel_hal::interrupt::{intr_off, intr_on};
+        intr_on();
+        let ret = syscall.syscall(num as u32, args).await as usize;
+        intr_off();
         */
         
         let ret = linux_syscall::remote_syscall(Arc::clone(&thread.0), thread_fn, num as u32, args).await as usize;
