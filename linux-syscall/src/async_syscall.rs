@@ -89,7 +89,6 @@ pub fn event_loop() -> ! {
     loop {
         if let Some(req) = REMOTE_SYSCALL_REQUESTS.lock().pop_back() {
             let raw_waker = RawWaker::new(core::ptr::null(), &EMPTY_WAKER_TABLE);
-            // USAGE: 233
             let waker = unsafe { Waker::from_raw(raw_waker) };
             let mut cx = Context::from_waker(&waker);
 
