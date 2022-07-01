@@ -16,8 +16,8 @@ use alloc::{
 use core::sync::atomic::AtomicI32;
 use hashbrown::HashMap;
 use kernel_hal::VirtAddr;
+use lock::{Mutex, MutexGuard};
 use rcore_fs::vfs::{FileSystem, INode};
-use spin::{Mutex, MutexGuard};
 
 use zircon_object::{
     object::{KernelObject, KoID, Signal},
@@ -126,7 +126,8 @@ pub async fn wait_child_any(proc: &Arc<Process>, nonblock: bool) -> LxResult<(Ko
         }
         drop(inner);
         if nonblock {
-            return Err(LxError::EAGAIN);
+            warn!("Nonblock flag isn't supported");
+            // return Err(LxError::EAGAIN);
         }
         let proc: Arc<dyn KernelObject> = proc.clone();
         proc.signal_clear(Signal::SIGCHLD);

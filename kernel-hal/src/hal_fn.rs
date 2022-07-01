@@ -1,5 +1,5 @@
-use alloc::{boxed::Box, string::String, vec::Vec};
-use core::{future::Future, ops::Range, time::Duration};
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
+use core::{any::Any, future::Future, ops::Range, time::Duration};
 
 use crate::drivers::prelude::{IrqHandler, IrqPolarity, IrqTriggerMode};
 use crate::{common, HalResult, KernelConfig, KernelHandler, PhysAddr, VirtAddr};
@@ -18,15 +18,12 @@ hal_fn_def! {
         }
 
         /// Initialize the primary CPU at an early stage (before the physical frame allocator).
-        #[doc(cfg(feature = "smp"))]
         pub fn primary_init_early(cfg: KernelConfig, handler: &'static impl KernelHandler) {}
 
         /// The main part of the primary CPU initialization.
-        #[doc(cfg(feature = "smp"))]
         pub fn primary_init();
 
         /// Initialize the secondary CPUs.
-        #[doc(cfg(feature = "smp"))]
         pub fn secondary_init() {}
     }
 
@@ -45,7 +42,7 @@ hal_fn_def! {
     /// Physical memory operations.
     pub mod mem: common::mem {
         /// Convert physical address to virtual address.
-        pub(crate) fn phys_to_virt(paddr: PhysAddr) -> VirtAddr;
+        pub fn phys_to_virt(paddr: PhysAddr) -> VirtAddr;
 
         /// Convert virtual address to physical address.
         pub fn virt_to_phys(vaddr: VirtAddr) -> PhysAddr;
@@ -149,10 +146,10 @@ hal_fn_def! {
         pub fn spawn(future: impl Future<Output = ()> + Send + 'static);
 
         /// Set tid and pid of current task.
-        pub fn set_tid(tid: u64, pid: u64);
+        pub fn set_current_thread(thread: Option<Arc<dyn Any + Send + Sync>>) {}
 
         /// Get tid and pid of current task.
-        pub fn get_tid() -> (u64, u64);
+        pub fn get_current_thread() -> Option<Arc<dyn Any + Send + Sync>> { None }
     }
 
     /// Time and clock functions.

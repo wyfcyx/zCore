@@ -1,14 +1,17 @@
 use {
     super::*,
     crate::util::block_range::BlockIter,
+    alloc::collections::BTreeMap,
     alloc::collections::VecDeque,
     alloc::sync::{Arc, Weak},
     alloc::vec::Vec,
     core::cell::{Ref, RefCell, RefMut},
     core::ops::Range,
     core::sync::atomic::*,
-    hashbrown::HashMap,
-    kernel_hal::{mem::PhysFrame, PAGE_SIZE},
+    kernel_hal::{
+        mem::{phys_to_virt, PhysFrame},
+        PAGE_SIZE,
+    },
     lock::{Mutex, MutexGuard},
 };
 
@@ -82,7 +85,7 @@ struct VMObjectPagedInner {
     /// The size in bytes.
     size: usize,
     /// Physical frames of this VMO.
-    frames: HashMap<usize, PageState>,
+    frames: BTreeMap<usize, PageState>,
     /// All mappings to this VMO.
     mappings: Vec<Weak<VmMapping>>,
     /// Cache Policy
@@ -166,7 +169,7 @@ impl VMObjectPaged {
                 parent_offset: 0usize,
                 parent_limit: 0usize,
                 size: pages * PAGE_SIZE,
-                frames: HashMap::new(),
+                frames: BTreeMap::new(),
                 mappings: Vec::new(),
                 cache_policy: CachePolicy::Cached,
                 contiguous: false,
@@ -436,6 +439,25 @@ impl VMObjectTrait for VMObjectPaged {
 
     fn is_paged(&self) -> bool {
         true
+    }
+
+    fn as_mut_buf(&self) -> ZxResult<(MutexGuard<()>, &mut [u8])> {
+        let (guard, mut inner) = self.get_inner_mut();
+        inner.as_mut_buf().map(|(addr, size)| {
+            (guard, unsafe {
+                core::slice::from_raw_parts_mut(addr as *mut u8, size)
+            })
+        })
+    }
+
+    fn unset_contiguous(&self) {
+        let (_guard, mut inner) = self.get_inner_mut();
+        if inner.contiguous {
+            inner.contiguous = false;
+            for (_index, frame) in inner.frames.iter_mut() {
+                frame.pin_count -= 1;
+            }
+        }
     }
 }
 
@@ -756,7 +778,7 @@ impl VMObjectPagedInner {
                 parent_offset: offset,
                 parent_limit: (offset + len).min(self.size),
                 size: len,
-                frames: HashMap::new(),
+                frames: BTreeMap::new(),
                 mappings: Vec::new(),
                 cache_policy: CachePolicy::Cached,
                 contiguous: false,
@@ -803,11 +825,10 @@ impl VMObjectPagedInner {
         self.parent_offset = 0;
         self.parent_limit = self.size;
         child.inner.borrow_mut().parent = Some(hidden);
-        // update mappings
+        // update mappings, for COW, remove write flags in PageTable
         for map in self.mappings.iter() {
             if let Some(map) = map.upgrade() {
                 map.range_change(pages(offset), pages(len), RangeChangeOp::RemoveWrite);
-                //用于写时复制
             }
         }
         Ok(child)
@@ -1013,6 +1034,15 @@ impl VMObjectPagedInner {
         }
         true
     }
+
+    fn as_mut_buf(&mut self) -> ZxResult<(usize, usize)> {
+        if self.contiguous {
+            let addr = phys_to_virt(self.commit_page(0, MMUFlags::WRITE)?) as usize;
+            let size = self.size;
+            return Ok((addr, size));
+        }
+        Err(ZxError::UNAVAILABLE)
+    }
 }
 
 impl Drop for VMObjectPaged {
@@ -1110,6 +1140,66 @@ mod tests {
         assert_eq!(vmo0.get_info().committed_bytes as usize, PAGE_SIZE);
         assert_eq!(vmo1.get_info().committed_bytes as usize, PAGE_SIZE);
         assert_eq!(vmo2.get_info().committed_bytes as usize, PAGE_SIZE);
+    }
+
+    #[test]
+    fn many_clones() {
+        const N: usize = 4;
+        let old: u8 = 0xa;
+        let new: u8 = 0xb;
+        let permutations = [
+            [0, 1, 2, 3],
+            [0, 1, 3, 2],
+            [0, 2, 1, 3],
+            [0, 2, 3, 1],
+            [0, 3, 1, 2],
+            [0, 3, 2, 1],
+            [1, 0, 2, 3],
+            [1, 0, 3, 2],
+            [1, 2, 0, 3],
+            [1, 2, 3, 0],
+            [1, 3, 0, 2],
+            [1, 3, 2, 0],
+            [2, 1, 0, 3],
+            [2, 1, 3, 0],
+            [2, 0, 1, 3],
+            [2, 0, 3, 1],
+            [2, 3, 1, 0],
+            [2, 3, 0, 1],
+            [3, 1, 2, 0],
+            [3, 1, 0, 2],
+            [3, 2, 1, 0],
+            [3, 2, 0, 1],
+            [3, 0, 1, 2],
+            [3, 0, 2, 1],
+        ];
+        for i in 0..24 {
+            let vmo0 = VmObject::new_paged(1);
+            vmo0.write(0, &[old]).unwrap();
+            let vmo1 = vmo0.create_child(false, 0, PAGE_SIZE).unwrap();
+            let vmo2 = vmo0.create_child(false, 0, PAGE_SIZE).unwrap();
+            let vmo3 = vmo1.create_child(false, 0, PAGE_SIZE).unwrap();
+            let vmos: [Arc<VmObject>; 4] = [vmo0.clone(), vmo1.clone(), vmo2.clone(), vmo3.clone()];
+            let mut write: [bool; 4] = [false; 4];
+            let perm = permutations[i];
+            println!("{:?}", perm);
+            for j in 0..N {
+                println!("j = {}, write = {}", j, perm[j]);
+                vmos[perm[j]].write(0, &[new]).unwrap();
+                write[perm[j]] = true;
+                let mut buf: [u8; 1] = [0];
+                for k in 0..N {
+                    vmos[k].read(0, &mut buf).unwrap();
+                    println!("vmo[{}] = {:x}", k, buf[0]);
+                    if write[k] {
+                        assert!(buf[0] == new);
+                    } else {
+                        assert!(buf[0] == old);
+                    }
+                    buf[0] = 0;
+                }
+            }
+        }
     }
 
     impl VmObject {

@@ -6,11 +6,11 @@ ARCH ?= x86_64
 
 # print top level help
 help:
-	cargo xtask help
+	cargo xtask
 
 # setup git lfs and git submodules
 setup:
-	cargo setup
+	cargo initialize
 
 # update toolchain and dependencies
 update:
@@ -32,10 +32,6 @@ other-test:
 image:
 	cargo image --arch $(ARCH)
 
-# check code style
-check:
-	cargo check-style
-
 # build and open project document
 doc:
 	cargo doc --open
@@ -44,11 +40,19 @@ doc:
 clean:
 	cargo clean
 	rm -rf rootfs
-	rm -rf ignored/target
 	rm -rf zCore/disk
 	find zCore -maxdepth 1 -name "*.img" -delete
+	find zCore -maxdepth 1 -name "*.bin" -delete
 
-rt-test:
-	cd rootfs/x86_64 && git clone https://kernel.googlesource.com/pub/scm/linux/kernel/git/clrkwllms/rt-tests --depth 1
-	cd rootfs/x86_64/rt-tests && make
-	echo x86 gcc build rt-test,now need manual modificy.
+# delete targets, including those that are large and compile slowly
+cleanup: clean
+	rm -rf ignored/target
+
+# delete everything, including origin files that are downloaded directly
+clean-everything: clean
+	rm -rf ignored
+
+# rt-test:
+# 	cd rootfs/x86_64 && git clone https://kernel.googlesource.com/pub/scm/linux/kernel/git/clrkwllms/rt-tests --depth 1
+# 	cd rootfs/x86_64/rt-tests && make
+# 	echo x86 gcc build rt-test,now need manual modificy.

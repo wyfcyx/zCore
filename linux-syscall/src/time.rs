@@ -14,6 +14,9 @@ impl Syscall<'_> {
     /// if buffer is non-NULL, stores it in the struct timespec pointed to by buffer
     pub fn sys_clock_gettime(&self, clock: usize, mut buf: UserOutPtr<TimeSpec>) -> SysResult {
         info!("clock_gettime: id={:?} buf={:?}", clock, buf);
+        if buf.is_null() {
+            return Err(LxError::EINVAL);
+        }
         // TODO: handle clock_settime
         let ts = TimeSpec::now();
         buf.write(ts)?;
@@ -47,6 +50,9 @@ impl Syscall<'_> {
     #[cfg(target_arch = "x86_64")]
     pub fn sys_time(&mut self, mut time: UserOutPtr<u64>) -> SysResult {
         info!("time: time: {:?}", time);
+        if time.is_null() {
+            return Err(LxError::EINVAL);
+        }
         let sec = TimeSpec::now().sec;
         time.write(sec as u64)?;
         Ok(sec)
@@ -74,7 +80,9 @@ impl Syscall<'_> {
     /// - `ru_stime`: system CPU time used
     pub fn sys_getrusage(&mut self, who: usize, mut rusage: UserOutPtr<RUsage>) -> SysResult {
         info!("getrusage: who: {}, rusage: {:?}", who, rusage);
-
+        if rusage.is_null() {
+            return Err(LxError::EINVAL);
+        }
         let new_rusage = RUsage {
             utime: TimeVal::now(),
             stime: TimeVal::now(),
@@ -91,26 +99,20 @@ impl Syscall<'_> {
 
         let tick = (tv.sec * 1_000_000 + tv.usec) / USEC_PER_TICK;
 
-        let new_buf = Tms {
-            tms_utime: 0,
-            tms_stime: 0,
-            tms_cutime: 0,
-            tms_cstime: 0,
-        };
-
-        buf.write(new_buf)?;
+        if !buf.is_null() {
+            let new_buf = Tms {
+                tms_utime: 0,
+                tms_stime: 0,
+                tms_cutime: 0,
+                tms_cstime: 0,
+            };
+            buf.write(new_buf)?;
+        } else {
+            warn!("sys_times: Invalid buf {:x?}", buf);
+        }
 
         info!("tick: {:?}", tick);
         Ok(tick as usize)
-    }
-
-    /// Allows the calling thread to sleep for
-    /// an interval specified with nanosecond precision
-    pub async fn sys_nanosleep(&self, req: UserInPtr<TimeSpec>) -> SysResult {
-        info!("nanosleep: deadline={:?}", req);
-        let duration = req.read()?.into();
-        nanosleep(duration).await;
-        Ok(0)
     }
 
     /// clock nanosleep
@@ -121,41 +123,39 @@ impl Syscall<'_> {
         req: UserInPtr<TimeSpec>,
         rem: UserOutPtr<TimeSpec>,
     ) -> SysResult {
-        warn!(
-            "clock_nanosleep: clockid={:?},flags={:?},req={:?},，rem={:?}",
+        info!(
+            "clock_nanosleep: clockid={:?}, flags={:?}, req={:?}, rem={:?}",
             clockid,
             flags,
             req.read()?,
             rem
         );
         use core::time::Duration;
+        use kernel_hal::{thread, timer};
         let duration: Duration = req.read()?.into();
         let clockid = ClockId::from(clockid);
         let flags = ClockFlags::from(flags);
-        warn!("clockid={:?},flags={:?}", clockid, flags,);
+        info!("clockid={:?}, flags={:?}", clockid, flags,);
         match clockid {
             ClockId::ClockRealTime => {
                 match flags {
                     ClockFlags::ZeroFlag => {
-                        nanosleep(duration).await;
+                        thread::sleep_until(timer::deadline_after(duration)).await;
                     }
                     ClockFlags::TimerAbsTime => {
                         // 目前统一由nanosleep代替了、之后再修改
-                        nanosleep(duration).await;
+                        thread::sleep_until(timer::deadline_after(duration)).await;
                     }
                 }
             }
-            ClockId::ClockMonotonic => {
-                match flags {
-                    ClockFlags::ZeroFlag => {
-                        nanosleep(duration).await;
-                    }
-                    ClockFlags::TimerAbsTime => {
-                        // 目前统一由nanosleep代替了、之后再修改
-                        nanosleep(duration).await;
-                    }
+            ClockId::ClockMonotonic => match flags {
+                ClockFlags::ZeroFlag => {
+                    thread::sleep_until(timer::deadline_after(duration)).await;
                 }
-            }
+                ClockFlags::TimerAbsTime => {
+                    thread::sleep_until(timer::deadline_after(duration)).await;
+                }
+            },
             ClockId::ClockProcessCpuTimeId => {}
             ClockId::ClockThreadCpuTimeId => {}
             ClockId::ClockMonotonicRaw => {}
