@@ -1,13 +1,15 @@
 use core::future::Future;
-use core::task::{Poll, Waker, RawWaker, RawWakerVTable, Context};
+use core::task::{Poll, Context};
 use core::pin::Pin;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use alloc::sync::Arc;
 use alloc::boxed::Box;
-use alloc::collections::VecDeque;
+use alloc::collections::{VecDeque, BTreeMap};
 use super::Thread;
 use crate::{ThreadFn, CurrentThread, Syscall};
 use lock::Mutex;
 use lazy_static::*;
+use woke::Woke;
 
 /// Polled by the application core, wrap the behavior of the async syscall.
 pub struct RemoteSyscallFuture {
@@ -61,75 +63,151 @@ pub struct RemoteSyscallRequest {
     args: [usize; 6],
     completed_ptr: usize,
     ret_ptr: usize,
-    wakeup_fn: Box<dyn FnOnce() -> () + Send + 'static>,
+    wakeup_fn: Box<dyn FnOnce() -> () + Send + Sync + 'static>,
 }
 
 lazy_static! {
     static ref REMOTE_SYSCALL_REQUESTS: Mutex<VecDeque<RemoteSyscallRequest>> = Mutex::new(VecDeque::new());
+    static ref ASYNC_SYSCALL_MODULE: Arc<Mutex<AsyncSyscallModule>> = Arc::new(Mutex::new(AsyncSyscallModule::new()));
 }
 
-/// An empty waker.
-/// Usage:
-/// ```rust
-/// let raw_waker = RawWaker::new(core::ptr::null(), &EMPTY_WAKER_TABLE);
-/// let waker = unsafe { Waker::from_raw(raw_waker) };
-/// let mut cx = Context::from_waker(&waker);
-/// ```
-const EMPTY_WAKER_TABLE: RawWakerVTable = RawWakerVTable::new(
-    |data| RawWaker::new(data, &EMPTY_WAKER_TABLE),
-    |_data| {},
-    |_data| {},
-    |_data| {},
-);
+static ASYNC_TASK_ID: AtomicUsize = AtomicUsize::new(0);
+
+type SyscallFuture = Pin<Box<dyn Future<Output = isize> + Send>>;
+
+pub struct AsyncSyscallTask {
+    pub id: usize,
+    pub future: Arc<Mutex<SyscallFuture>>,
+    pub req: RemoteSyscallRequest,
+}
+
+pub struct AsyncSyscallModule {
+    pub task_map: BTreeMap<usize, AsyncSyscallTask>,
+    pub ready_tasks: VecDeque<usize>,
+    //pub pending_tasks: VecDeque<usize>,
+}
+
+impl AsyncSyscallModule {
+    pub fn new() -> Self {
+        Self {
+            task_map: BTreeMap::new(),
+            ready_tasks: VecDeque::new(),
+            //pending_tasks: VecDeque::new(),
+        }
+    }
+    pub fn add_task(&mut self, future: SyscallFuture, req: RemoteSyscallRequest) {
+        ASYNC_TASK_ID.fetch_add(1, Ordering::SeqCst);
+        let task_id = ASYNC_TASK_ID.load(Ordering::SeqCst);
+        self.task_map.insert(task_id, AsyncSyscallTask {
+            id: task_id,
+            future: Arc::new(Mutex::new(future)),
+            req,
+        });
+        self.ready_tasks.push_back(task_id);
+    }
+    pub fn wakeup_task(&mut self, task_id: usize) {
+        // avoid the case that a completed task is woken up
+        if self.task_map.get(&task_id).is_some() {
+            self.ready_tasks.push_back(task_id);
+        }
+    }
+    pub fn remove_task(&mut self, task_id: usize) -> AsyncSyscallTask {
+        //info!("remove_task id = {}", task_id);
+        self.task_map.remove(&task_id).expect("remove task failed")
+    }
+    pub fn select_task(&mut self) -> Option<usize> {
+        self.ready_tasks.pop_front()
+    }
+}
+
+struct AsyncSyscallWaker {
+    pub module: Arc<Mutex<AsyncSyscallModule>>,
+    pub task_id: usize,
+}
+
+impl Woke for AsyncSyscallWaker {
+    fn wake_by_ref(arc_self: &Arc<Self>) {
+        let mut module = arc_self.module.lock();
+        //warn!("wake_by_ref, task_id = {}", arc_self.task_id);
+        module.wakeup_task(arc_self.task_id);
+    }
+}
+
+struct SyscallWithoutRef {
+    pub thread: CurrentThread,
+    pub thread_fn: ThreadFn,
+    pub syscall_entry: usize,
+}
 
 /// Main event loop of async syscall module.
 #[allow(unsafe_code)]
 pub fn event_loop() -> ! {
     warn!("Hello world!");
     loop {
-        if let Some(req) = REMOTE_SYSCALL_REQUESTS.lock().pop_back() {
-            let raw_waker = RawWaker::new(core::ptr::null(), &EMPTY_WAKER_TABLE);
-            let waker = unsafe { Waker::from_raw(raw_waker) };
-            let mut cx = Context::from_waker(&waker);
-
-
-            /* original code was:
-            let mut syscall = linux_syscall::Syscall {
-                thread,
-                thread_fn,
-                syscall_entry: kernel_hal::context::syscall_entry as usize,
-            };
-            trace!("Syscall : {} {:x?}", num as u32, args);
-            run_with_irq_enable! {
-                let ret = syscall.syscall(num as u32, args).await as usize
+        //info!("new iteration of the event_loop");
+        let mut module = ASYNC_SYSCALL_MODULE.lock();
+        // add new requests
+        {
+            let mut requests = REMOTE_SYSCALL_REQUESTS.lock();
+            while let Some(req) = requests.pop_back() {
+                let syscall_without_ref = SyscallWithoutRef {
+                    thread: CurrentThread(req.current_thread.clone()),
+                    thread_fn: req.thread_fn,
+                    syscall_entry: kernel_hal::context::syscall_entry as usize,
+                };
+                let num_copy = req.num;
+                let args_copy = req.args;
+                let future = Box::pin(async move {
+                    let mut syscall = Syscall {
+                        thread: &syscall_without_ref.thread,
+                        thread_fn: syscall_without_ref.thread_fn,
+                        syscall_entry: syscall_without_ref.syscall_entry,
+                    };
+                    syscall.syscall(num_copy, args_copy).await
+                });
+                module.add_task(future, req);
             }
-            */
-
-            let current_thread = CurrentThread(req.current_thread.clone());
-            let mut syscall = Syscall {
-                thread: &current_thread,
-                thread_fn: req.thread_fn,
-                syscall_entry: kernel_hal::context::syscall_entry as usize,
-            };
+        }
+        // we do not need to wakeup tasks, since they are woken up elsewhere
+        
+        // handle requests
+        if let Some(task_id) = module.select_task() {
+            info!("select task id: {}", task_id);
+            let task = module.task_map.get(&task_id).unwrap();
+            
+            // generate waker
+            let waker = Arc::new(AsyncSyscallWaker {
+                module: ASYNC_SYSCALL_MODULE.clone(),
+                task_id,
+            });
+            let waker = woke::waker_ref(&waker);
+            let mut cx = Context::from_waker(&waker);
+            // switch pagetable before polling
             use cfg_if::cfg_if;
             cfg_if! {
                 if #[cfg(all(target_os = "none", target_arch = "aarch64"))] {
                     use kernel_hal::arch::config::USER_TABLE_FLAG;
-                    kernel_hal::vm::activate_paging(req.current_thread.proc().vmar().table_phys() | USER_TABLE_FLAG);
+                    kernel_hal::vm::activate_paging(task.req.current_thread.proc().vmar().table_phys() | USER_TABLE_FLAG);
                 } else {
-                    kernel_hal::vm::activate_paging(req.current_thread.proc().vmar().table_phys());
+                    kernel_hal::vm::activate_paging(task.req.current_thread.proc().vmar().table_phys());
                 }
             }
-            let mut future = Box::pin(syscall.syscall(req.num as u32, req.args));
+            // fetch future to poll
+            let future = Arc::clone(&task.future);
+            drop(module);
+            // poll
+            let mut future = future.lock();
             if let Poll::Ready(ret) = future.as_mut().poll(&mut cx) {
+                let mut module = ASYNC_SYSCALL_MODULE.lock();
+                let req = module.remove_task(task_id).req;
+                info!("task {} dropped", task_id);
                 unsafe {
                     (req.completed_ptr as *mut bool).write_volatile(true);
                     (req.ret_ptr as *mut isize).write_volatile(ret);
                 }
                 (req.wakeup_fn)();
             } else {
-                error!("the system call num {} does not return immediately", req.num);
-                loop {}
+                info!("task {} pending", task_id);
             }
         }
     }
