@@ -1,7 +1,7 @@
 use core::future::Future;
 use core::task::{Poll, Context};
 use core::pin::Pin;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use alloc::sync::Arc;
 use alloc::boxed::Box;
 use alloc::collections::{VecDeque, BTreeMap};
@@ -35,7 +35,7 @@ impl Future for RemoteSyscallFuture {
                 ret_ptr: &self.ret as *const _ as usize,
                 wakeup_fn: Box::new(move || { waker.wake_by_ref(); }),
             };
-            REMOTE_SYSCALL_REQUESTS.lock().push_front(req);
+            REMOTE_SYSCALL_REQUESTS.push_back(req);
             Poll::Pending
         } else {
             Poll::Ready(self.ret)
@@ -66,8 +66,40 @@ pub struct RemoteSyscallRequest {
     wakeup_fn: Box<dyn FnOnce() -> () + Send + Sync + 'static>,
 }
 
+pub struct RemoteSyscallSubmissionQueue {
+    pub empty: AtomicBool,
+    pub queue: Mutex<VecDeque<RemoteSyscallRequest>>,
+}
+
+impl RemoteSyscallSubmissionQueue {
+    pub fn new() -> Self {
+        Self {
+            empty: AtomicBool::new(true),
+            queue: Mutex::new(VecDeque::new()),
+        }
+    }
+    pub fn push_back(&self, req: RemoteSyscallRequest) {
+        self.queue.lock().push_back(req);
+        self.empty.store(false, Ordering::SeqCst);
+    }
+    pub fn pop_front(&self) -> Option<RemoteSyscallRequest> {
+        if self.empty.load(Ordering::SeqCst) == false {
+            let mut queue = self.queue.lock();
+            let ret = queue.pop_front();
+            if queue.is_empty() {
+                self.empty.store(true, Ordering::SeqCst);
+            }
+            ret
+        } else {
+            None
+        }
+    }
+}
+
+
 lazy_static! {
-    static ref REMOTE_SYSCALL_REQUESTS: Mutex<VecDeque<RemoteSyscallRequest>> = Mutex::new(VecDeque::new());
+    //static ref REMOTE_SYSCALL_REQUESTS: Mutex<VecDeque<RemoteSyscallRequest>> = Mutex::new(VecDeque::new());
+    static ref REMOTE_SYSCALL_REQUESTS: RemoteSyscallSubmissionQueue = RemoteSyscallSubmissionQueue::new();
     static ref ASYNC_SYSCALL_MODULE: Arc<Mutex<AsyncSyscallModule>> = Arc::new(Mutex::new(AsyncSyscallModule::new()));
 }
 
@@ -128,7 +160,6 @@ struct AsyncSyscallWaker {
 impl Woke for AsyncSyscallWaker {
     fn wake_by_ref(arc_self: &Arc<Self>) {
         let mut module = arc_self.module.lock();
-        //warn!("wake_by_ref, task_id = {}", arc_self.task_id);
         module.wakeup_task(arc_self.task_id);
     }
 }
@@ -144,12 +175,11 @@ struct SyscallWithoutRef {
 pub fn event_loop() -> ! {
     warn!("Hello world!");
     loop {
-        //info!("new iteration of the event_loop");
         let mut module = ASYNC_SYSCALL_MODULE.lock();
         // add new requests
         {
-            let mut requests = REMOTE_SYSCALL_REQUESTS.lock();
-            while let Some(req) = requests.pop_back() {
+            while let Some(req) = REMOTE_SYSCALL_REQUESTS.pop_front() {
+                info!("queue op completed, before adding new req");
                 let syscall_without_ref = SyscallWithoutRef {
                     thread: CurrentThread(req.current_thread.clone()),
                     thread_fn: req.thread_fn,
@@ -166,6 +196,7 @@ pub fn event_loop() -> ! {
                     syscall.syscall(num_copy, args_copy).await
                 });
                 module.add_task(future, req);
+                info!("after adding new req");
             }
         }
         // we do not need to wakeup tasks, since they are woken up elsewhere
@@ -206,6 +237,7 @@ pub fn event_loop() -> ! {
                     (req.ret_ptr as *mut isize).write_volatile(ret);
                 }
                 (req.wakeup_fn)();
+                info!("wakeup client!");
             } else {
                 info!("task {} pending", task_id);
             }

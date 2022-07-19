@@ -213,7 +213,10 @@ ifeq ($(ARCH), x86_64)
       ifeq ($(shell uname), Darwin)
         qemu_opts += -accel hvf
       else
-        qemu_opts += -accel kvm -cpu host,migratable=no,+invtsc
+        #qemu_opts += -accel kvm -cpu host,migratable=no,+invtsc
+		qemu_opts += -accel tcg,thread=multi
+		#qemu_opts += -accel kvm -cpu host
+		#qemu_opts += -cpu qemu64
       endif
 	endif
   endif
@@ -268,7 +271,7 @@ ifeq ($(ARCH), aarch64)
 endif
 	$(qemu) $(qemu_opts) -S -gdb tcp::15234 &
 	@sleep 1
-	$(gdb)
+	$(gdb) -ex 'file $(kernel_elf)' -ex 'set arch i386:x86-64' -ex 'target remote localhost:15234'
 
 .PHONY: kernel
 kernel:
