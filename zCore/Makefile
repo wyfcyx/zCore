@@ -187,7 +187,8 @@ qemu_opts += \
 
 ifeq ($(DISK), on)
   ifeq ($(ARCH), x86_64)
-    qemu_opts += -device ide-hd,bus=ahci.0,drive=userdisk
+    #qemu_opts += -device ide-hd,bus=ahci.0,drive=userdisk
+	qemu_opts += -device virtio-blk-pci,drive=userdisk
   else ifeq ($(ARCH), riscv64)
     qemu_opts += -device virtio-blk-device,drive=userdisk
   endif
@@ -217,6 +218,9 @@ ifeq ($(ARCH), x86_64)
 		qemu_opts += -accel tcg,thread=multi
 		#qemu_opts += -accel kvm -cpu host
 		#qemu_opts += -cpu qemu64
+		#qemu_opts += -cpu kvm64
+		#qemu_opts += -cpu max
+		#qemu_opts += -enable-kvm -cpu qemu64 
       endif
 	endif
   endif
