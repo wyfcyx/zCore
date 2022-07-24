@@ -290,6 +290,11 @@ pub fn init(mapper: Option<Arc<dyn IoMapper>>) -> DeviceResult<Vec<Device>> {
             dev.pic_interrupt_line,
             dev.interrupt_pin,
         );
+        if let Some(cap_vec) = &dev.capabilities {
+            for cap in cap_vec {
+                info!("{:?}", cap);
+            }
+        }
         let res = init_driver(&dev, &mapper_driver);
         match res {
             Ok(d) => dev_list.push(d),
