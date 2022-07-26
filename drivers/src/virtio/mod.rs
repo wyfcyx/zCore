@@ -5,7 +5,7 @@ mod console;
 mod gpu;
 mod input;
 
-pub use blk::VirtIoBlk;
+pub use blk::{VirtIoBlk, VirtIoBlkPCI};
 pub use console::VirtIoConsole;
 pub use gpu::VirtIoGpu;
 pub use input::VirtIoInput;

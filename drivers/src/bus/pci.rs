@@ -4,6 +4,7 @@ use crate::{Device, DeviceError, DeviceResult, VirtAddr};
 use alloc::{collections::BTreeMap, format, sync::Arc, vec::Vec};
 use lock::Mutex;
 use pci::*;
+use virtio_drivers::{VirtIOPCIHeader, VirtIOBlkPCI};
 
 const PCI_COMMAND: u16 = 0x04;
 const BAR0: u16 = 0x10;
@@ -225,6 +226,72 @@ pub fn init_driver(dev: &PCIDevice, mapper: &Option<Arc<dyn IoMapper>>) -> Devic
                 return Err(DeviceError::NotSupported);
             }
         }
+        (0x1af4, dev_id) => {
+            // a virtio-pci device
+            let mut common_cfg_base_addr: Option<u64> = None;
+            let mut notify_cap_base_addr: Option<u64> = None;
+            let mut device_cfg_base_addr: Option<u64> = None;
+            if let Some(cap_vec) = &dev.capabilities {
+                for cap in cap_vec.iter() {
+                    //info!("{:?}", cap);
+                    if let CapabilityData::VNDR(CapabilityVNDRData {cap_length, data}) = cap.data {
+                        //info!("length = {}", cap_length);
+                        let cfg_type = data[0];
+                        let bar_idx = data[1];
+                        // data[2-4] -> paddings
+                        let offset = u32::from_le_bytes([data[5], data[6], data[7], data[8]]);
+                        // length of the structure within BAR, in bytes
+                        let length = u32::from_le_bytes([data[9], data[10], data[11], data[12]]);
+                        info!("cfg_type={},bar_idx={},offset={},length={}", cfg_type, bar_idx, offset, length);
+                        if let Some(bar) = dev.bars[bar_idx as usize] {
+                            if let BAR::Memory(addr, _, _, _) = bar {
+                                let base_addr = addr + offset as u64;
+                                match cfg_type {
+                                    0x1 => {
+                                        // VIRTIO_PCI_CAP_COMMON_CFG
+                                        common_cfg_base_addr = Some(base_addr);
+                                    }
+                                    0x2 => {
+                                        // VIRTIO_PCI_CAP_NOTIFY_CFG
+                                        notify_cap_base_addr = Some(base_addr);
+                                    }
+                                    0x4 => {
+                                        // VIRTIO_PCI_CAP_DEVICE_CFG
+                                        device_cfg_base_addr = Some(base_addr);
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                warn!("BAR::IO not supported");
+                            }
+                        } else {
+                            panic!("BAR {} does not exist", bar_idx);
+                        }
+                    }
+                    // TODO: think about MSI-X interrupt handling, i.e, Capability::MSIX
+                }
+            } else {
+                panic!("Capability list for this virtio device was not found!");
+            }
+            info!("{:?}", dev.bars);
+            let mut header = unsafe { VirtIOPCIHeader::new(
+                dev_id,
+                dev.bars,
+                common_cfg_base_addr.expect("Common Cfg was not found") as u64,
+                notify_cap_base_addr.expect("Notify Cap was not found") as u64,
+                device_cfg_base_addr.expect("Device Cfg was not found") as u64,
+            ) };
+            let dev = match dev_id {
+                0x1001 => {
+                    let dev = crate::virtio::VirtIoBlkPCI::new(header).unwrap();
+                    Device::Block(Arc::new(dev))
+                }
+                _ => {
+                    panic!("do not support other virtio-pci devices!");
+                }
+            };
+            return Ok(dev);
+        }
         _ => {}
     }
     if dev.id.class == 0x01 && dev.id.subclass == 0x06 {
@@ -290,11 +357,6 @@ pub fn init(mapper: Option<Arc<dyn IoMapper>>) -> DeviceResult<Vec<Device>> {
             dev.pic_interrupt_line,
             dev.interrupt_pin,
         );
-        if let Some(cap_vec) = &dev.capabilities {
-            for cap in cap_vec {
-                info!("{:?}", cap);
-            }
-        }
         let res = init_driver(&dev, &mapper_driver);
         match res {
             Ok(d) => dev_list.push(d),

@@ -16,7 +16,7 @@ cfg_if! {
         #[cfg(not(feature = "libos"))]
         pub fn rootfs() -> Arc<dyn FileSystem> {
             use linux_object::fs::rcore_fs_wrapper::{Block, BlockCache};
-            
+            /*
             use linux_object::fs::rcore_fs_wrapper::MemBuf;
             use rcore_fs::dev::Device;
             let device: Arc<dyn Device> = if let Some(initrd) = init_ram_disk() {
@@ -25,10 +25,11 @@ cfg_if! {
                 let block = kernel_hal::drivers::all_block().first_unwrap();
                 Arc::new(BlockCache::new(Block::new(block), 0x100))
             };
-            /*
+            */
+            
             let block = kernel_hal::drivers::all_block().first_unwrap();
             let device = Arc::new(BlockCache::new(Block::new(block), 0x100));
-            */
+            
             info!("Opening the rootfs...");
             rcore_fs_sfs::SimpleFileSystem::open(device).expect("failed to open device SimpleFS")
         }
