@@ -231,6 +231,7 @@ pub fn init_driver(dev: &PCIDevice, mapper: &Option<Arc<dyn IoMapper>>) -> Devic
             let mut common_cfg_base_addr: Option<u64> = None;
             let mut notify_cap_base_addr: Option<u64> = None;
             let mut device_cfg_base_addr: Option<u64> = None;
+            let mut notify_off_multiplier: u32 = 0;
             if let Some(cap_vec) = &dev.capabilities {
                 for cap in cap_vec.iter() {
                     //info!("{:?}", cap);
@@ -254,6 +255,7 @@ pub fn init_driver(dev: &PCIDevice, mapper: &Option<Arc<dyn IoMapper>>) -> Devic
                                     0x2 => {
                                         // VIRTIO_PCI_CAP_NOTIFY_CFG
                                         notify_cap_base_addr = Some(base_addr);
+                                        notify_off_multiplier = u32::from_le_bytes([data[13], data[14], data[15], data[16]]);
                                     }
                                     0x4 => {
                                         // VIRTIO_PCI_CAP_DEVICE_CFG
@@ -280,6 +282,7 @@ pub fn init_driver(dev: &PCIDevice, mapper: &Option<Arc<dyn IoMapper>>) -> Devic
                 common_cfg_base_addr.expect("Common Cfg was not found") as u64,
                 notify_cap_base_addr.expect("Notify Cap was not found") as u64,
                 device_cfg_base_addr.expect("Device Cfg was not found") as u64,
+                notify_off_multiplier,
             ) };
             let dev = match dev_id {
                 0x1001 => {

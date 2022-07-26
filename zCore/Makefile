@@ -151,7 +151,7 @@ ifeq ($(ARCH), x86_64)
   qemu_opts += \
 		-machine q35 \
 		-cpu Haswell,+smap,-check,-fsgsbase \
-		-m 1G \
+		-m 2G \
 		-serial mon:stdio \
 		-serial file:/tmp/serial.out \
 		-drive format=raw,if=pflash,readonly=on,file=$(ovmf) \
@@ -188,7 +188,7 @@ qemu_opts += \
 ifeq ($(DISK), on)
   ifeq ($(ARCH), x86_64)
     #qemu_opts += -device ide-hd,bus=ahci.0,drive=userdisk
-	qemu_opts += -device virtio-blk-pci,drive=userdisk
+	qemu_opts += -device virtio-blk-pci,drive=userdisk --trace "virtio*"
   else ifeq ($(ARCH), riscv64)
     qemu_opts += -device virtio-blk-device,drive=userdisk
   endif
