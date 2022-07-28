@@ -153,7 +153,8 @@ mod virtio_drivers_ffi {
 
     #[no_mangle]
     extern "C" fn virtio_virt_to_phys(vaddr: VirtAddr) -> PhysAddr {
-        vaddr - KCONFIG.phys_to_virt_offset
+        //vaddr - KCONFIG.phys_to_virt_offset
+        crate::hal_fn::mem::virt_to_phys_pagetable(vaddr)
     }
 }
 

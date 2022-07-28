@@ -15,6 +15,13 @@ hal_fn_impl! {
             vaddr - KCONFIG.phys_to_virt_offset
         }
 
+        fn virt_to_phys_pagetable(vaddr: VirtAddr) -> PhysAddr {
+            use super::arch::vm::PageTable;
+            use crate::common::vm::GenericPageTable;
+            let pagetable = PageTable::from_current();
+            pagetable.query(vaddr).unwrap().0
+        }
+
         fn free_pmem_regions() -> Vec<Range<PhysAddr>> {
             super::arch::mem::free_pmem_regions()
         }

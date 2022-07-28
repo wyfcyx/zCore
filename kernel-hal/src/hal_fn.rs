@@ -47,6 +47,9 @@ hal_fn_def! {
         /// Convert virtual address to physical address.
         pub fn virt_to_phys(vaddr: VirtAddr) -> PhysAddr;
 
+        /// Convert virtual address to physical address by querying the pagetable.
+        pub fn virt_to_phys_pagetable(vaddr: VirtAddr) -> PhysAddr;
+        
         /// Returns all free physical memory regions.
         pub fn free_pmem_regions() -> Vec<Range<PhysAddr>>;
 
