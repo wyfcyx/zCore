@@ -188,11 +188,14 @@ qemu_opts += \
 ifeq ($(DISK), on)
   ifeq ($(ARCH), x86_64)
     #qemu_opts += -device ide-hd,bus=ahci.0,drive=userdisk
-	qemu_opts += -device virtio-blk-pci,drive=userdisk --trace "virtio*"
-  else ifeq ($(ARCH), riscv64)
-    qemu_opts += -device virtio-blk-device,drive=userdisk
+	qemu_opts += -device virtio-blk-pci,drive=userdisk
+	qemu_opts += -drive format=raw,id=userdisk,if=none,file=$(esp)/EFI/zCore/x86_64.img
+  else
+	ifeq ($(ARCH), riscv64)
+      qemu_opts += -device virtio-blk-device,drive=userdisk
+  	endif
+    qemu_opts += -drive format=qcow2,id=userdisk,if=none,file=$(qemu_disk)
   endif
-  qemu_opts += -drive format=qcow2,id=userdisk,if=none,file=$(qemu_disk)
 endif
 
 ifeq ($(GRAPHIC), on)

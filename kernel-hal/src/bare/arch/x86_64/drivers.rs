@@ -51,6 +51,20 @@ pub(super) fn init() -> DeviceResult {
     {
         // PCI scan
         use zcore_drivers::bus::pci;
+        use crate::common::vm::GenericPageTable;
+        use crate::MMUFlags;
+        let pci_mmio_regions = pci::collect_mmio_regions(None)?;
+        let mut pagetable = super::vm::PageTable::from_current();
+        for mmio_region in pci_mmio_regions.iter() {
+            debug!("{:?}", mmio_region);
+            let start_vaddr = crate::imp::arch::phys_to_virt(mmio_region.0);
+            let size = crate::common::addr::align_up(mmio_region.1);
+            let flags = MMUFlags::READ | MMUFlags::WRITE;
+            debug!("start_vaddr={:#x}, size={:#x}, start_paddr={:#x}", start_vaddr, size, mmio_region.0);
+            pagetable.map_cont(start_vaddr, size, mmio_region.0, flags).expect("mapping failed");
+        }
+        // important! do not dealloc the PhysFrames related to these mmio regions
+        core::mem::forget(pagetable);
         let pci_devs = pci::init(None)?;
         for d in pci_devs.into_iter() {
             drivers::add_device(d);

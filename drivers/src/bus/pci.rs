@@ -20,6 +20,8 @@ const PCI_MSI_DATA_64: u16 = 0x0C;
 
 const PCI_CAP_ID_MSI: u8 = 0x05;
 
+type PciMmioRegion = (crate::PhysAddr, usize);
+
 struct PortOpsImpl;
 
 #[cfg(target_arch = "x86_64")]
@@ -163,6 +165,22 @@ unsafe fn enable(loc: Location, paddr: u64) -> Option<usize> {
     assigned_irq
 }
 
+pub fn mmio_regions(dev: &PCIDevice, mapper: &Option<Arc<dyn IoMapper>>) -> DeviceResult<Vec<PciMmioRegion>> {
+    match (dev.id.vendor_id, dev.id.device_id) {
+        (0x1af4, _) => {
+            let mut mmio_regions: Vec<PciMmioRegion> = Vec::new();
+            for bar in dev.bars {
+                if let Some(BAR::Memory(addr, len, _, _)) = bar {
+                    mmio_regions.push((addr as crate::PhysAddr, len as usize));
+                }
+            }
+            Ok(mmio_regions)
+        },
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Initialize a PCI device. Return the device and the MMIO regions which are required to be mapped.
 pub fn init_driver(dev: &PCIDevice, mapper: &Option<Arc<dyn IoMapper>>) -> DeviceResult<Device> {
     let name = format!("enp{}s{}f{}", dev.loc.bus, dev.loc.device, dev.loc.function);
     match (dev.id.vendor_id, dev.id.device_id) {
@@ -243,10 +261,10 @@ pub fn init_driver(dev: &PCIDevice, mapper: &Option<Arc<dyn IoMapper>>) -> Devic
                         let offset = u32::from_le_bytes([data[5], data[6], data[7], data[8]]);
                         // length of the structure within BAR, in bytes
                         let length = u32::from_le_bytes([data[9], data[10], data[11], data[12]]);
-                        info!("cfg_type={},bar_idx={},offset={},length={}", cfg_type, bar_idx, offset, length);
+                        debug!("cfg_type={},bar_idx={},offset={},length={}", cfg_type, bar_idx, offset, length);
                         if let Some(bar) = dev.bars[bar_idx as usize] {
                             if let BAR::Memory(addr, _, _, _) = bar {
-                                let base_addr = addr + offset as u64;
+                                let base_addr = phys_to_virt(addr as usize + offset as usize) as u64;
                                 match cfg_type {
                                     0x1 => {
                                         // VIRTIO_PCI_CAP_COMMON_CFG
@@ -275,7 +293,7 @@ pub fn init_driver(dev: &PCIDevice, mapper: &Option<Arc<dyn IoMapper>>) -> Devic
             } else {
                 panic!("Capability list for this virtio device was not found!");
             }
-            info!("{:?}", dev.bars);
+            debug!("{:?}", dev.bars);
             let mut header = unsafe { VirtIOPCIHeader::new(
                 dev_id,
                 dev.bars,
@@ -335,6 +353,23 @@ pub fn detach_driver(loc: &Location) -> bool {
     false
 }
 
+pub fn collect_mmio_regions(mapper: Option<Arc<dyn IoMapper>>) -> DeviceResult<Vec<PciMmioRegion>> {
+    let mapper_driver = if let Some(m) = mapper {
+        m.query_or_map(PCI_BASE, PAGE_SIZE * 256 * 32 * 8);
+        Some(m)
+    } else {
+        None
+    };
+    let mut pci_mmio_regions: Vec<PciMmioRegion> = Vec::new();
+    let pci_iter = unsafe { scan_bus(&PortOpsImpl, PCI_ACCESS) };
+    for dev in pci_iter {
+        if let Ok(mut regions) = mmio_regions(&dev, &mapper_driver) {
+            pci_mmio_regions.append(&mut regions);
+        }
+    }
+    Ok(pci_mmio_regions)
+}
+
 pub fn init(mapper: Option<Arc<dyn IoMapper>>) -> DeviceResult<Vec<Device>> {
     let mapper_driver = if let Some(m) = mapper {
         m.query_or_map(PCI_BASE, PAGE_SIZE * 256 * 32 * 8);
@@ -344,6 +379,7 @@ pub fn init(mapper: Option<Arc<dyn IoMapper>>) -> DeviceResult<Vec<Device>> {
     };
 
     let mut dev_list = Vec::new();
+    let mut pci_mmio_regions: Vec<PciMmioRegion> = Vec::new();
     let pci_iter = unsafe { scan_bus(&PortOpsImpl, PCI_ACCESS) };
     info!("");
     info!("--------- PCI bus:device:function ---------");
@@ -362,7 +398,9 @@ pub fn init(mapper: Option<Arc<dyn IoMapper>>) -> DeviceResult<Vec<Device>> {
         );
         let res = init_driver(&dev, &mapper_driver);
         match res {
-            Ok(d) => dev_list.push(d),
+            Ok(d) => {
+                dev_list.push(d);
+            },
             Err(e) => warn!(
                 "{:?}, failed to initialize PCI device: {:04x}:{:04x}",
                 e, dev.id.vendor_id, dev.id.device_id
