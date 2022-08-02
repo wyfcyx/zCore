@@ -217,7 +217,7 @@ ifeq ($(ARCH), x86_64)
       ifeq ($(shell uname), Darwin)
         qemu_opts += -accel hvf
       else
-		qemu_opts += -accel kvm -cpu qemu64,-x2apic,+invtsc
+		qemu_opts += -accel kvm -cpu qemu64,-x2apic,+invtsc,-vmx-hlt-exit,-vmx-rdtsc-exit
         #qemu_opts += -accel kvm -cpu host,migratable=no,+invtsc
 		#qemu_opts += -accel tcg,thread=multi
 		#qemu_opts += -accel kvm -cpu host

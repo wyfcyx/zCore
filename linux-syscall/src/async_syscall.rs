@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use alloc::collections::{VecDeque, BTreeMap};
 use super::Thread;
 use crate::{ThreadFn, CurrentThread, Syscall};
-use lock::Mutex;
+use spin::Mutex;
 use lazy_static::*;
 use woke::Woke;
 
