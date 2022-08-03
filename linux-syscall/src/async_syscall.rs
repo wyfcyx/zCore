@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use alloc::collections::{VecDeque, BTreeMap};
 use super::Thread;
 use crate::{ThreadFn, CurrentThread, Syscall};
-use spin::Mutex;
+use lock::Mutex;
 use lazy_static::*;
 use woke::Woke;
 
@@ -130,6 +130,11 @@ impl AsyncSyscallModule {
     pub fn add_task(&mut self, future: SyscallFuture, req: RemoteSyscallRequest) {
         ASYNC_TASK_ID.fetch_add(1, Ordering::SeqCst);
         let task_id = ASYNC_TASK_ID.load(Ordering::SeqCst);
+        /*
+        if task_id % 100 == 0 {
+            warn!("syscall req id={}", task_id);
+        }
+        */
         self.task_map.insert(task_id, AsyncSyscallTask {
             id: task_id,
             future: Arc::new(Mutex::new(future)),
