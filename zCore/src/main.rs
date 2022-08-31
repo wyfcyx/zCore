@@ -36,6 +36,7 @@ fn primary_main(config: kernel_hal::KernelConfig) {
     info!("Boot options: {:#?}", options);
     memory::init_frame_allocator(&kernel_hal::mem::free_pmem_regions());
     kernel_hal::primary_init();
+    executor::register_executor_runtime();
     STARTED.store(true, Ordering::SeqCst);
     cfg_if! {
         if #[cfg(all(feature = "linux", feature = "zircon"))] {
@@ -68,6 +69,13 @@ fn secondary_main() -> ! {
     // until secondary_init is complete.
     kernel_hal::secondary_init();
     log::warn!("hart{} inited", kernel_hal::cpu::cpu_id());
-    linux_syscall::event_loop();
+    if zcore_loader::MY_IMPL {
+        linux_syscall::event_loop();
+    } else {
+        //executor::register_executor_runtime();
+        //utils::wait_for_exit(None)
+        loop {}
+    }
+    
     //utils::wait_for_exit(None)
 }

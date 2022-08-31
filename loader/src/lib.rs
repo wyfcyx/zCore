@@ -23,3 +23,6 @@ cfg_if! {
         pub mod zircon;
     }
 }
+
+/// My async module implementation or the original zCore system.
+pub static MY_IMPL: bool = false;

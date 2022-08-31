@@ -140,7 +140,7 @@ impl Syscall<'_> {
     /// If `prot` is 0, the memory cannot be accessed at all.
     pub fn sys_mprotect(&self, addr: usize, len: usize, prot: usize) -> SysResult {
         let prot = MmapProt::from_bits_truncate(prot);
-        info!(
+        warn!(
             "mprotect: addr={:#x}, size={:#x}, prot={:?}",
             addr, len, prot
         );

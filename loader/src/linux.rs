@@ -43,7 +43,7 @@ pub fn run(args: Vec<String>, envs: Vec<String>, rootfs: Arc<dyn FileSystem>) ->
 }
 
 fn thread_fn(thread: CurrentThread) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
-    Box::pin(run_user(thread))
+    Box::pin(run_user(Arc::new(thread)))
 }
 
 /// The function of a new thread.
@@ -54,9 +54,10 @@ fn thread_fn(thread: CurrentThread) -> Pin<Box<dyn Future<Output = ()> + Send + 
 /// - enter user mode
 /// - handle trap/interrupt/syscall according to the return value
 /// - return the context to the user thread
-async fn run_user(thread: CurrentThread) {
+async fn run_user(thread: Arc<CurrentThread>) {
     kernel_hal::thread::set_current_thread(Some(thread.inner()));
     loop {
+
         // wait
         let mut ctx = thread.wait_for_run().await;
         if thread.state() == ThreadState::Dying {
@@ -89,6 +90,7 @@ async fn run_user(thread: CurrentThread) {
         }
     }
     kernel_hal::thread::set_current_thread(None);
+    info!("exit run_user");
 }
 
 fn handle_signal(
@@ -160,27 +162,33 @@ macro_rules! run_with_irq_enable {
 */
 
 
-async fn handle_user_trap(thread: &CurrentThread, mut ctx: Box<UserContext>) -> ZxResult {
+async fn handle_user_trap(thread: &Arc<CurrentThread>, mut ctx: Box<UserContext>) -> ZxResult {
     let reason = ctx.trap_reason();
     if let TrapReason::Syscall = reason {
         let num = syscall_num(&ctx);
         let args = syscall_args(&ctx);
         ctx.advance_pc(reason);
         thread.put_context(ctx);
-        /*
-        let mut syscall = linux_syscall::Syscall {
-            thread,
-            thread_fn,
-            syscall_entry: kernel_hal::context::syscall_entry as usize,
-        };
-        trace!("Syscall : {} {:x?}", num as u32, args);
-        use kernel_hal::interrupt::{intr_off, intr_on};
-        intr_on();
-        let ret = syscall.syscall(num as u32, args).await as usize;
-        intr_off();
-        */
-        
-        let ret = linux_syscall::remote_syscall(Arc::clone(&thread.0), thread_fn, num as u32, args).await as usize;
+
+        let ret: usize;
+        let my_impl = super::MY_IMPL;
+        if !my_impl || num == 57 || num == 58 || num == 59 {
+        //if !my_impl {
+            let mut syscall = linux_syscall::Syscall {
+                thread,
+                thread_fn,
+                syscall_entry: kernel_hal::context::syscall_entry as usize,
+            };
+            trace!("Syscall : {} {:x?}", num as u32, args);
+            use kernel_hal::interrupt::{intr_off, intr_on};
+            intr_on();
+            ret = syscall.syscall(num as u32, args).await as usize;
+            intr_off();
+        } else {
+            //warn!("b rsys");
+            ret = linux_syscall::remote_syscall(Arc::clone(thread), thread_fn, num as u32, args).await as usize;
+            //warn!("e rsys");
+        }
 
         thread.with_context(|ctx| ctx.set_field(UserContextField::ReturnValue, ret))?;
         return Ok(());
@@ -191,6 +199,7 @@ async fn handle_user_trap(thread: &CurrentThread, mut ctx: Box<UserContext>) -> 
     let pid = thread.proc().id();
     match reason {
         TrapReason::Interrupt(vector) => {
+            trace!("vector={}",vector);
             kernel_hal::interrupt::handle_irq(vector);
             #[cfg(not(feature = "libos"))]
             if vector == kernel_hal::context::TIMER_INTERRUPT_VEC {

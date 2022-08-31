@@ -257,7 +257,7 @@ impl Syscall<'_> {
         let path = path.as_c_str()?;
         let args = argv.read_cstring_array()?;
         let envs = envp.read_cstring_array()?;
-        info!(
+        warn!(
             "execve: path: {:?}, argv: {:?}, envs: {:?}",
             path, argv, envs
         );
@@ -294,6 +294,7 @@ impl Syscall<'_> {
         // TODO: use right signal
         // self.zircon_process().signal_set(Signal::SIGNALED);
         // Workaround, the child process could NOT exit correctly
+        warn!("entry={:#x},sp={:#x}", entry, sp);
         self.thread
             .with_context(|ctx| ctx.setup_uspace(entry, sp, &[0, 0, 0]))?;
         Ok(0)

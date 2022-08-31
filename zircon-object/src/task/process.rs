@@ -135,6 +135,29 @@ impl Process {
         Ok(proc)
     }
 
+    /// Create a new process with extension info.
+    /// Also with an existing vmar, used in the vfork syscall.
+    pub fn create_with_ext_vmar(
+        job: &Arc<Job>,
+        name: &str,
+        ext: impl Any + Send + Sync,
+        vmar: Arc<VmAddressRegion>,
+    )-> ZxResult<Arc<Self>> {
+        let proc = Arc::new(Process {
+            base: KObjectBase::with_name(name),
+            _counter: CountHelper::new(),
+            job: job.clone(),
+            policy: job.policy(),
+            vmar,
+            ext: Box::new(ext),
+            exceptionate: Exceptionate::new(ExceptionChannelType::Process),
+            debug_exceptionate: Exceptionate::new(ExceptionChannelType::Debugger),
+            inner: Mutex::new(ProcessInner::default()),
+        });
+        job.add_process(proc.clone())?;
+        Ok(proc)
+    }
+
     /// Start the first thread in the process.
     ///
     /// This causes a thread to begin execution at the program
@@ -202,10 +225,12 @@ impl Process {
     /// The process do not terminate immediately when exited.
     /// It will terminate after all its child threads are terminated.
     pub fn exit(&self, retcode: i64) {
+        info!("into Process::exit");
         let mut inner = self.inner.lock();
         if let Status::Exited(_) = inner.status {
             return;
         }
+        info!("Process::exit pt0");
         inner.status = Status::Exited(retcode);
         if inner.threads.is_empty() {
             inner.handles.clear();
@@ -213,6 +238,7 @@ impl Process {
             self.terminate();
             return;
         }
+        info!("Process::exit pt1");
         for thread in inner.threads.iter() {
             thread.kill();
         }
@@ -221,6 +247,7 @@ impl Process {
 
     /// The process finally terminates.
     fn terminate(&self) {
+        info!("into Process::terminate");
         let mut inner = self.inner.lock();
         let retcode = match inner.status {
             Status::Exited(retcode) => retcode,
@@ -469,6 +496,7 @@ impl Process {
     ///
     /// If no more threads left, exit the process.
     pub(super) fn remove_thread(&self, tid: KoID) {
+        info!("into Process::remove_thread");
         let mut inner = self.inner.lock();
         inner.threads.retain(|t| t.id() != tid);
         if inner.threads.is_empty() {

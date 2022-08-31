@@ -151,7 +151,7 @@ ifeq ($(ARCH), x86_64)
   qemu_opts += \
 		-machine q35 \
 		-cpu Haswell,+smap,-check,-fsgsbase \
-		-m 1G \
+		-m 2G \
 		-serial mon:stdio \
 		-serial file:/tmp/serial.out \
 		-drive format=raw,if=pflash,readonly=on,file=$(ovmf) \
@@ -217,7 +217,7 @@ ifeq ($(ARCH), x86_64)
       ifeq ($(shell uname), Darwin)
         qemu_opts += -accel hvf
       else
-		qemu_opts += -accel kvm -cpu qemu64,-x2apic,+invtsc,-vmx-hlt-exit,-vmx-rdtsc-exit
+		qemu_opts += -accel kvm -cpu qemu64,-x2apic,+invtsc,-vmx-hlt-exit,-vmx-rdtsc-exit,-vmx-intr-exit
         #qemu_opts += -accel kvm -cpu host,migratable=no,+invtsc
 		#qemu_opts += -accel tcg,thread=multi
 		#qemu_opts += -accel kvm -cpu host
@@ -229,6 +229,8 @@ ifeq ($(ARCH), x86_64)
 	endif
   endif
 endif
+
+qemu_opts += -name debug-threads=on
 
 ################ Make targets ################
 
@@ -259,7 +261,7 @@ endif
 ifeq ($(ARCH), aarch64)
 	$(sed) 's#\"cmdline\":.*#\"cmdline\": \"$(CMDLINE)\",#' disk/EFI/Boot/Boot.json
 endif
-	$(qemu) $(qemu_opts)
+	taskset 0x3 $(qemu) $(qemu_opts)
 
 ifeq ($(ARCH), x86_64)
   gdb := gdb

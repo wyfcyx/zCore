@@ -74,9 +74,9 @@ pub struct Stack {
 impl Stack {
     /// create a stack
     fn new(sp: usize) -> Self {
-        let mut data = Vec::with_capacity(0x4000);
+        let mut data = Vec::with_capacity(0x1_0000);
         unsafe {
-            data.set_len(0x4000);
+            data.set_len(0x1_0000);
         }
         Stack {
             sp,

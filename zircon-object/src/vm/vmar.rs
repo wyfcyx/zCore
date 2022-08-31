@@ -555,15 +555,58 @@ impl VmAddressRegion {
         let guard = self.inner.lock();
         let inner = guard.as_ref().unwrap();
         if !self.contains(vaddr) {
+            //warn!("pt0");
             return Err(ZxError::NOT_FOUND);
         }
         if let Some(child) = inner.children.iter().find(|ch| ch.contains(vaddr)) {
+            //warn!("pt1");
             return child.handle_page_fault(vaddr, flags);
         }
         if let Some(mapping) = inner.mappings.iter().find(|map| map.contains(vaddr)) {
+            //warn!("pt2");
             return mapping.handle_page_fault(vaddr, flags);
         }
+        //warn!("pt3");
         Err(ZxError::NOT_FOUND)
+    }
+
+    pub fn try_handle_page_fault(&self, vaddr: VirtAddr) -> bool {
+        let guard = self.inner.lock();
+        let inner = guard.as_ref().unwrap();
+        if !self.contains(vaddr) {
+            return false;
+        }
+        for ch in inner.children.iter() {
+            warn!("child vmar:info={:?},flags={:?}", ch.get_info(), ch.get_flags());
+        }
+        for mapping in inner.mappings.iter() {
+            warn!("child VmMapping={:?}", mapping);
+        }
+        if let Some(child) = inner.children.iter().find(|ch| ch.contains(vaddr)) {
+            warn!("case0:info={:?},flags={:?}", child.get_info(), child.get_flags());
+            return true;
+        }
+        if let Some(_mapping) = inner.mappings.iter().find(|map| map.contains(vaddr)) {
+            warn!("case1");
+            return true;
+        }
+        false
+    }
+
+    pub fn debug(&self) {
+        let guard = self.inner.lock();
+        let inner = guard.as_ref().unwrap();
+        warn!("self wmar:info={:?},flags={:?}", self.get_info(), self.get_flags());
+        warn!("---child vmars");
+        for ch in inner.children.iter() {
+            ch.debug();
+        }
+        warn!("+++child vmars");
+        warn!("---child vmmappings");
+        for mapping in inner.mappings.iter() {
+            warn!("VmMapping={:?}", mapping);
+        }
+        warn!("+++child vmappings");
     }
 
     fn for_each_mapping(&self, f: &mut impl FnMut(&Arc<VmMapping>)) {
@@ -954,8 +997,9 @@ impl VmMapping {
             let offset = vaddr - inner.addr;
             (offset + inner.vmo_offset, inner.flags[offset / PAGE_SIZE])
         };
-        // error!("page fault: addr = {:x}, access_flag = {:?}, flags = {:?}", vaddr, access_flags, flags);
+        //warn!("page fault: addr = {:x}, access_flag = {:?}, flags = {:?}", vaddr, access_flags, flags);
         if !flags.contains(access_flags) {
+            error!("page fault: addr = {:x}, access_flag = {:?}, flags = {:?}", vaddr, access_flags, flags);
             return Err(ZxError::ACCESS_DENIED);
         }
         // 当 PF 发生的时候，如果只要求读权限，则即便可写也现只给读权限。

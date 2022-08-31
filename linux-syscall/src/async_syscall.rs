@@ -5,7 +5,6 @@ use core::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use alloc::sync::Arc;
 use alloc::boxed::Box;
 use alloc::collections::{VecDeque, BTreeMap};
-use super::Thread;
 use crate::{ThreadFn, CurrentThread, Syscall};
 use lock::Mutex;
 use lazy_static::*;
@@ -13,7 +12,7 @@ use woke::Woke;
 
 /// Polled by the application core, wrap the behavior of the async syscall.
 pub struct RemoteSyscallFuture {
-    current_thread: Arc<Thread>,
+    current_thread: Arc<CurrentThread>,
     thread_fn: ThreadFn,
     num: u32,
     args: [usize; 6],
@@ -44,7 +43,7 @@ impl Future for RemoteSyscallFuture {
 }
 
 /// Called by the application core. Issue an async syscall request to the second core.
-pub fn remote_syscall(current_thread: Arc<Thread>, thread_fn: ThreadFn, num: u32, args: [usize; 6],) -> Pin<Box<RemoteSyscallFuture>> {
+pub fn remote_syscall(current_thread: Arc<CurrentThread>, thread_fn: ThreadFn, num: u32, args: [usize; 6],) -> Pin<Box<RemoteSyscallFuture>> {
     Box::pin(RemoteSyscallFuture {
         current_thread,
         thread_fn,
@@ -57,7 +56,7 @@ pub fn remote_syscall(current_thread: Arc<Thread>, thread_fn: ThreadFn, num: u32
 
 /// Contains all information about the syscall execution on the second core.
 pub struct RemoteSyscallRequest {
-    pub current_thread: Arc<Thread>,
+    pub current_thread: Arc<CurrentThread>,
     thread_fn: ThreadFn,
     num: u32,
     args: [usize; 6],
@@ -130,11 +129,11 @@ impl AsyncSyscallModule {
     pub fn add_task(&mut self, future: SyscallFuture, req: RemoteSyscallRequest) {
         ASYNC_TASK_ID.fetch_add(1, Ordering::SeqCst);
         let task_id = ASYNC_TASK_ID.load(Ordering::SeqCst);
-        /*
+        
         if task_id % 100 == 0 {
             warn!("syscall req id={}", task_id);
         }
-        */
+        
         self.task_map.insert(task_id, AsyncSyscallTask {
             id: task_id,
             future: Arc::new(Mutex::new(future)),
@@ -170,7 +169,7 @@ impl Woke for AsyncSyscallWaker {
 }
 
 struct SyscallWithoutRef {
-    pub thread: CurrentThread,
+    pub thread: Arc<CurrentThread>,
     pub thread_fn: ThreadFn,
     pub syscall_entry: usize,
 }
@@ -184,9 +183,9 @@ pub fn event_loop() -> ! {
         // add new requests
         {
             while let Some(req) = REMOTE_SYSCALL_REQUESTS.pop_front() {
-                info!("queue op completed, before adding new req");
+                trace!("queue op completed, before adding new req");
                 let syscall_without_ref = SyscallWithoutRef {
-                    thread: CurrentThread(req.current_thread.clone()),
+                    thread: Arc::clone(&req.current_thread),
                     thread_fn: req.thread_fn,
                     syscall_entry: kernel_hal::context::syscall_entry as usize,
                 };
@@ -201,14 +200,14 @@ pub fn event_loop() -> ! {
                     syscall.syscall(num_copy, args_copy).await
                 });
                 module.add_task(future, req);
-                info!("after adding new req");
+                trace!("after adding new req");
             }
         }
         // we do not need to wakeup tasks, since they are woken up elsewhere
         
         // handle requests
         if let Some(task_id) = module.select_task() {
-            info!("select task id: {}", task_id);
+            //warn!("select task id: {}", task_id);
             let task = module.task_map.get(&task_id).unwrap();
             
             // generate waker
@@ -233,19 +232,23 @@ pub fn event_loop() -> ! {
             drop(module);
             // poll
             let mut future = future.lock();
+            //warn!("b rsys");
             if let Poll::Ready(ret) = future.as_mut().poll(&mut cx) {
+                //warn!("e rsys");
                 let mut module = ASYNC_SYSCALL_MODULE.lock();
                 let req = module.remove_task(task_id).req;
-                info!("task {} dropped", task_id);
+                trace!("task {} dropped", task_id);
                 unsafe {
                     (req.completed_ptr as *mut bool).write_volatile(true);
                     (req.ret_ptr as *mut isize).write_volatile(ret);
                 }
                 (req.wakeup_fn)();
-                info!("wakeup client!");
+                trace!("wakeup client!");
             } else {
-                info!("task {} pending", task_id);
+                trace!("task {} pending", task_id);
             }
+        } else {
+            //warn!("no tasks!");
         }
     }
 }

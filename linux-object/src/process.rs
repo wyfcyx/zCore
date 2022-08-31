@@ -65,13 +65,39 @@ impl ProcessExt for Process {
                 ..Default::default()
             }),
         };
+        /*
+        let new_proc = if !vfork {
+            let new_proc = Process::create_with_ext(&parent.job(), "", new_linux_proc)?;
+            new_proc.vmar().fork_from(&parent.vmar())?;
+            new_proc
+        } else {
+            Process::create_with_ext_vmar(&parent.job(), "", new_linux_proc, parent.vmar())?
+        };
+        */
+        
         let new_proc = Process::create_with_ext(&parent.job(), "", new_linux_proc)?;
+        //new_proc.vmar().fork_from(&parent.vmar())?;
+
         linux_parent_inner
             .children
             .insert(new_proc.id(), new_proc.clone());
+        
         if !vfork {
             new_proc.vmar().fork_from(&parent.vmar())?;
         }
+        
+
+        {
+            //let parent_vmar = parent.vmar();
+            //warn!("parent:info={:?},flags={:?}", parent_vmar.get_info(), parent_vmar.get_flags());
+            //let new_vmar = new_proc.vmar();
+            //warn!("new:info={:?},flags={:?}", new_vmar.get_info(), new_vmar.get_flags());
+            //warn!("parent:o={}", parent_vmar.try_handle_page_fault(0x423a7));
+            //warn!("new:o={}", new_vmar.try_handle_page_fault(0x423a7));
+            //parent_vmar.debug();
+            //new_vmar.debug();
+        }
+        
 
         // notify parent on terminated
         let parent = parent.clone();

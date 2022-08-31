@@ -303,6 +303,7 @@ impl Thread {
     /// The thread do not terminate immediately when stopped. It is just made dying.
     /// It will terminate after some cleanups (when `terminate` are called **explicitly** by upper layer).
     fn stop(&self, killed: bool) {
+        info!("into Thread::stop");
         let mut inner = self.inner.lock();
         if inner.state == ThreadState::Dead {
             return;
@@ -418,6 +419,7 @@ impl Thread {
 
     /// Terminate the current running thread.
     fn terminate(&self) {
+        info!("into Thread::terminate");
         let mut inner = self.inner.lock();
         self.exceptionate.shutdown();
         inner.change_state(ThreadState::Dead, &self.base);
@@ -427,6 +429,7 @@ impl Thread {
 
 impl Task for Thread {
     fn kill(&self) {
+        info!("into Thread::kill");
         self.stop(true)
     }
 
@@ -645,6 +648,7 @@ impl core::ops::Deref for CurrentThread {
 
 impl Drop for CurrentThread {
     fn drop(&mut self) {
+        info!("into CurrentThread::drop");
         self.terminate();
     }
 }
